@@ -163,23 +163,40 @@ The goal is to **prompt reflection**, not make judgments. Even if detection isn'
 
 ---
 
-## Decision 6: CLI-First Design
+## Decision 6: Dual Interface Architecture (CLI + Web)
 
 ### Context
 Could build web UI, desktop app, or CLI.
 
 ### Decision
-Start with CLI only.
+Build CLI first, then add a web layer that reuses the core engine.
+
+### Implementation
+
+```
+focus_companion.py     ← Core engine + CLI interface
+        ↓
+api/main.py            ← FastAPI REST wrapper (imports core classes)
+        ↓
+web/                   ← React + TypeScript frontend
+```
 
 ### Rationale
-1. **Fastest to build**: No frontend framework, no CSS
-2. **Universal**: Works on any OS with Python
-3. **Focus on logic**: All effort goes into core algorithms
-4. **Interview-friendly**: Demonstrates backend/algorithm skills
-5. **Easy demo**: Terminal GIF captures everything
+1. **CLI-first**: Core logic developed without UI complexity
+2. **Shared core**: API imports from `focus_companion.py` — no code duplication
+3. **Technology choices**:
+   - FastAPI: Modern, async, auto-generated OpenAPI docs
+   - React 19: Latest features, excellent TypeScript support
+   - Tailwind CSS: Rapid styling without CSS files
+   - Chart.js: Lightweight visualization
 
-### Future Plan
-Web UI can be added later as a separate layer consuming the same data/logic.
+### Trade-offs Accepted
+- Two runtimes (Python + Node) for full stack
+- CORS configuration required for local dev
+- Frontend build step adds complexity
+
+### Why This Is Correct
+The architecture validates the original design: **core logic is UI-agnostic**. The same `AIEngine`, `TopicDriftDetector`, and `WeeklyReportGenerator` classes power both interfaces.
 
 ---
 
@@ -245,7 +262,7 @@ Interviewers want to see the system in action, not wait while you create session
 | JSON storage | Simplicity > scalability (for this use case) |
 | Multi-factor scoring | Nuance > binary classification |
 | Passive/active detection | Prompt reflection, not judgment |
-| CLI-first | Focus on core logic |
+| Dual interface (CLI + Web) | Core logic is UI-agnostic |
 | Weekly grading | Familiar + motivating |
 | Demo mode | Interview-readiness |
 

@@ -46,6 +46,8 @@ This application detects the gap between *perceived* understanding and *actual* 
 
 ## Quick Start
 
+### Option 1: CLI Mode
+
 ```bash
 # Normal mode
 python focus_companion.py
@@ -60,16 +62,40 @@ python focus_companion.py --export
 python focus_companion.py --stats
 ```
 
+### Option 2: Web Application
+
+```bash
+# Start the FastAPI backend
+cd api
+pip install fastapi uvicorn
+python main.py
+# API runs at http://localhost:8000
+
+# In a new terminal, start the React frontend
+cd web
+npm install
+npm run dev
+# Web app runs at http://localhost:5173
+```
+
 ## System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     USER INTERFACE                          │
-│                    (CLI Menu System)                        │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────────────┐
-│                   STUDY SESSION                             │
+│                     USER INTERFACES                         │
+│  ┌─────────────────────────┐  ┌─────────────────────────┐  │
+│  │      CLI (Python)       │  │    Web App (React)      │  │
+│  │   focus_companion.py    │  │    localhost:5173       │  │
+│  └───────────┬─────────────┘  └───────────┬─────────────┘  │
+└──────────────┼────────────────────────────┼────────────────┘
+               │                            │
+               │              ┌─────────────▼─────────────┐
+               │              │    FastAPI Backend        │
+               │              │    localhost:8000         │
+               │              └─────────────┬─────────────┘
+               │                            │
+┌──────────────▼────────────────────────────▼────────────────┐
+│                   CORE ENGINE (Python)                      │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
 │  │   Timer     │  │   Notes     │  │   Breaks    │         │
 │  │  Tracking   │  │  Collection │  │  Tracking   │         │
@@ -181,28 +207,35 @@ The system is designed to work offline with deterministic rules. The AI layer is
   3. Tomorrow: Quiz yourself on time complexity
 ```
 
-## Data Storage
-
-All data is stored locally in JSON format:
+## Project Structure
 
 ```
 project/
-├── focus_companion.py
+├── focus_companion.py        # Core engine + CLI interface
+├── api/
+│   ├── __init__.py
+│   └── main.py               # FastAPI REST backend
+├── web/
+│   ├── src/
+│   │   ├── components/       # React UI components
+│   │   ├── pages/            # Dashboard, History, NewSession
+│   │   ├── api.ts            # API client
+│   │   └── App.tsx           # Router setup
+│   └── package.json
 ├── data/
-│   └── sessions.json      # All study sessions
-└── weekly_report_*.txt    # Exported reports
+│   └── sessions.json         # All study sessions
+└── weekly_report_*.txt       # Exported reports
 ```
 
 ## Limitations
 
 1. **No true semantic understanding** — Topic relevance uses keyword matching, not embeddings
 2. **Self-reported data** — Relies on honest note-taking
-3. **CLI only** — No mobile/web interface (intentional for Phase 1)
-4. **English only** — Keyword detection optimized for English
+3. **English only** — Keyword detection optimized for English
 
 ## Future Enhancements
 
-- [ ] Web dashboard with visualizations
+- [x] Web dashboard with visualizations
 - [ ] Spaced repetition integration
 - [ ] Mobile companion app for quick logging
 - [ ] Research-backed scoring weights
@@ -212,23 +245,30 @@ project/
 
 | Component | Technology |
 |-----------|------------|
-| Language | Python 3.8+ |
+| Core Engine | Python 3.8+ |
+| Backend | FastAPI + Uvicorn |
+| Frontend | React 19 + TypeScript + Tailwind CSS |
+| Charts | Chart.js + react-chartjs-2 |
 | AI (optional) | Claude API |
 | Storage | JSON |
-| Interface | CLI |
 
 ## Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/smart-study-companion.git
-cd smart-study-companion
+git clone https://github.com/Muhammad-Ramzan381/Smart-Study-Focus-Companion.git
+cd Smart-Study-Focus-Companion
 
 # (Optional) Set up API key for enhanced AI features
 export ANTHROPIC_API_KEY=your-key-here
 
-# Run the application
+# Option A: Run CLI
 python focus_companion.py
+
+# Option B: Run Web App
+pip install fastapi uvicorn
+cd api && python main.py &
+cd web && npm install && npm run dev
 ```
 
 ## License
