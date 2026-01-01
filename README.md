@@ -152,28 +152,28 @@ The system is designed to work offline with deterministic rules. The AI layer is
 
 ```
 ══════════════════════════════════════════════════
-  🤖 AI ANALYSIS
+  AI ANALYSIS
 ══════════════════════════════════════════════════
 
-  📋 SUMMARY:
+  SUMMARY:
      Covered: Binary search requires sorted array;
      Time complexity O(log n).
 
-  🎯 TOPIC RELEVANCE: 82/100
-     ✓ Notes align well with topic
+  TOPIC RELEVANCE: 82/100
+     Notes align well with topic
 
-  💡 FOCUS FEEDBACK:
+  FOCUS FEEDBACK:
      Great time management! Good note-taking effort.
 
 ──────────────────────────────────────────────────
-  📊 SESSION STATS:
+  SESSION STATS:
      • Planned: 25 min
      • Actual: 24.5 min
      • Breaks: 1
      • Completion: 98%
 
 ══════════════════════════════════════════════════
-  📝 REVISION TASKS
+  REVISION TASKS
 ══════════════════════════════════════════════════
 
   1. Implement binary search without looking at notes
