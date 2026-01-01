@@ -1109,7 +1109,7 @@ class WeeklyReportGenerator:
         # Time-based recommendations
         if this_time < 120:  # Less than 2 hours
             recommendations.append(
-                "⏰ Study time is low this week. Try scheduling 2-3 focused sessions."
+                "Study time is low this week. Try scheduling 2-3 focused sessions."
             )
         elif this_time > last_time * 1.5 and last_time > 0:
             recommendations.append(

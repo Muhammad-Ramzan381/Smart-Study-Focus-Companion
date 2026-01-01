@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+:root {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  @apply bg-slate-900 text-white min-h-screen;
+}
+
+.gradient-bg {
+  background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+}
+
+.card {
+  @apply bg-white/5 backdrop-blur-lg border border-white/10 rounded-xl;
+}
+
+.glow {
+  box-shadow: 0 0 30px rgba(59, 130, 246, 0.3);
+}
+
+.timer-display {
+  font-variant-numeric: tabular-nums;
+}
