@@ -27,6 +27,9 @@ import json
 import time
 import os
 import re
+import sys
+import argparse
+import random
 from datetime import datetime, timedelta
 from pathlib import Path
 from dataclasses import dataclass, asdict
@@ -851,6 +854,484 @@ def display_history():
 
 
 # ============================================================================
+# PHASE 3: WEEKLY REPORT & VISUALIZATION
+# ============================================================================
+
+class CLIChart:
+    """Simple CLI-based charts and visualizations."""
+
+    @staticmethod
+    def horizontal_bar(label: str, value: float, max_value: float,
+                       width: int = 20, fill: str = "█", empty: str = "░") -> str:
+        """Create a horizontal bar chart line."""
+        if max_value <= 0:
+            filled = 0
+        else:
+            filled = int((value / max_value) * width)
+        bar = fill * filled + empty * (width - filled)
+        return f"  {label:<12} [{bar}] {value:.0f}"
+
+    @staticmethod
+    def sparkline(values: List[float], width: int = 7) -> str:
+        """Create a mini sparkline from values."""
+        if not values:
+            return "─" * width
+
+        chars = " ▁▂▃▄▅▆▇█"
+        min_val = min(values)
+        max_val = max(values)
+        range_val = max_val - min_val if max_val != min_val else 1
+
+        result = ""
+        for v in values[-width:]:
+            idx = int(((v - min_val) / range_val) * (len(chars) - 1))
+            result += chars[idx]
+
+        return result
+
+    @staticmethod
+    def trend_arrow(current: float, previous: float) -> str:
+        """Get trend arrow based on change."""
+        if previous == 0:
+            return "→"
+        change = ((current - previous) / previous) * 100
+        if change > 10:
+            return "↑"
+        elif change < -10:
+            return "↓"
+        return "→"
+
+
+class WeeklyReportGenerator:
+    """Generates comprehensive weekly study reports."""
+
+    @classmethod
+    def generate(cls, sessions: List[StudySession]) -> dict:
+        """Generate complete weekly report data."""
+        today = datetime.now().date()
+        week_start = today - timedelta(days=today.weekday())  # Monday
+        week_end = week_start + timedelta(days=6)
+
+        # Filter sessions for this week and last week
+        this_week = []
+        last_week = []
+
+        for s in sessions:
+            session_date = datetime.fromisoformat(s.start_time).date()
+            if week_start <= session_date <= week_end:
+                this_week.append(s)
+            elif week_start - timedelta(days=7) <= session_date < week_start:
+                last_week.append(s)
+
+        return {
+            "period": {
+                "start": week_start.isoformat(),
+                "end": week_end.isoformat()
+            },
+            "overview": cls._calculate_overview(this_week, last_week),
+            "daily_breakdown": cls._daily_breakdown(this_week, week_start),
+            "topic_analysis": cls._topic_analysis(this_week),
+            "time_vs_retention": cls._time_vs_retention(this_week),
+            "problem_areas": cls._identify_problem_areas(this_week),
+            "recommendations": cls._generate_recommendations(this_week, last_week),
+            "streak": cls._calculate_streak(sessions)
+        }
+
+    @classmethod
+    def _calculate_overview(cls, this_week: List[StudySession],
+                           last_week: List[StudySession]) -> dict:
+        """Calculate overview statistics."""
+        def stats(sessions):
+            if not sessions:
+                return {"time": 0, "sessions": 0, "avg_relevance": 0, "issues": 0}
+            return {
+                "time": sum(s.actual_minutes for s in sessions),
+                "sessions": len(sessions),
+                "avg_relevance": sum(s.topic_relevance_score for s in sessions) / len(sessions),
+                "issues": sum(1 for s in sessions if s.topic_drift_detected or s.overconfidence_detected)
+            }
+
+        this_stats = stats(this_week)
+        last_stats = stats(last_week)
+
+        return {
+            "this_week": this_stats,
+            "last_week": last_stats,
+            "time_change": this_stats["time"] - last_stats["time"],
+            "sessions_change": this_stats["sessions"] - last_stats["sessions"]
+        }
+
+    @classmethod
+    def _daily_breakdown(cls, sessions: List[StudySession],
+                        week_start: datetime.date) -> List[dict]:
+        """Break down study time by day."""
+        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        daily = {i: {"day": days[i], "minutes": 0, "sessions": 0, "avg_score": []}
+                for i in range(7)}
+
+        for s in sessions:
+            day_idx = datetime.fromisoformat(s.start_time).weekday()
+            daily[day_idx]["minutes"] += s.actual_minutes
+            daily[day_idx]["sessions"] += 1
+            daily[day_idx]["avg_score"].append(s.topic_relevance_score)
+
+        # Calculate averages
+        for d in daily.values():
+            d["avg_score"] = sum(d["avg_score"]) / len(d["avg_score"]) if d["avg_score"] else 0
+
+        return list(daily.values())
+
+    @classmethod
+    def _topic_analysis(cls, sessions: List[StudySession]) -> List[dict]:
+        """Analyze performance by topic."""
+        topics = defaultdict(lambda: {
+            "time": 0, "sessions": 0, "scores": [], "issues": 0
+        })
+
+        for s in sessions:
+            t = topics[s.topic]
+            t["time"] += s.actual_minutes
+            t["sessions"] += 1
+            t["scores"].append(s.topic_relevance_score)
+            if s.topic_drift_detected or s.overconfidence_detected:
+                t["issues"] += 1
+
+        result = []
+        for topic, data in topics.items():
+            avg_score = sum(data["scores"]) / len(data["scores"]) if data["scores"] else 0
+            result.append({
+                "topic": topic,
+                "time": data["time"],
+                "sessions": data["sessions"],
+                "avg_score": avg_score,
+                "issues": data["issues"],
+                "understanding": "good" if avg_score >= 70 else "medium" if avg_score >= 50 else "low"
+            })
+
+        return sorted(result, key=lambda x: x["time"], reverse=True)
+
+    @classmethod
+    def _time_vs_retention(cls, sessions: List[StudySession]) -> dict:
+        """Analyze relationship between study time and retention."""
+        if not sessions:
+            return {"correlation": "insufficient_data", "insight": "Need more sessions"}
+
+        # Group by time buckets
+        short = [s for s in sessions if s.actual_minutes < 20]
+        medium = [s for s in sessions if 20 <= s.actual_minutes < 40]
+        long = [s for s in sessions if s.actual_minutes >= 40]
+
+        def avg_score(session_list):
+            if not session_list:
+                return 0
+            return sum(s.topic_relevance_score for s in session_list) / len(session_list)
+
+        return {
+            "short_sessions": {"count": len(short), "avg_score": avg_score(short)},
+            "medium_sessions": {"count": len(medium), "avg_score": avg_score(medium)},
+            "long_sessions": {"count": len(long), "avg_score": avg_score(long)},
+            "optimal_duration": cls._find_optimal_duration(sessions)
+        }
+
+    @classmethod
+    def _find_optimal_duration(cls, sessions: List[StudySession]) -> str:
+        """Find the optimal session duration based on scores."""
+        if len(sessions) < 3:
+            return "Need more data"
+
+        # Find duration with highest average score
+        duration_scores = defaultdict(list)
+        for s in sessions:
+            bucket = (int(s.actual_minutes) // 10) * 10
+            duration_scores[bucket].append(s.topic_relevance_score)
+
+        best_bucket = 25
+        best_score = 0
+        for bucket, scores in duration_scores.items():
+            if len(scores) >= 2:
+                avg = sum(scores) / len(scores)
+                if avg > best_score:
+                    best_score = avg
+                    best_bucket = bucket
+
+        return f"{best_bucket}-{best_bucket + 10} minutes"
+
+    @classmethod
+    def _identify_problem_areas(cls, sessions: List[StudySession]) -> List[dict]:
+        """Identify topics/patterns that need attention."""
+        problems = []
+
+        # Group by topic
+        topic_data = defaultdict(list)
+        for s in sessions:
+            topic_data[s.topic].append(s)
+
+        for topic, topic_sessions in topic_data.items():
+            issues = []
+
+            # Low average score
+            avg_score = sum(s.topic_relevance_score for s in topic_sessions) / len(topic_sessions)
+            if avg_score < 60:
+                issues.append(f"Low understanding ({avg_score:.0f}%)")
+
+            # High drift rate
+            drift_rate = sum(1 for s in topic_sessions if s.topic_drift_detected) / len(topic_sessions)
+            if drift_rate > 0.5:
+                issues.append(f"Frequent topic drift ({drift_rate*100:.0f}%)")
+
+            # Overconfidence pattern
+            overconf_rate = sum(1 for s in topic_sessions if s.overconfidence_detected) / len(topic_sessions)
+            if overconf_rate > 0.5:
+                issues.append(f"Retention issues ({overconf_rate*100:.0f}%)")
+
+            if issues:
+                problems.append({
+                    "topic": topic,
+                    "sessions": len(topic_sessions),
+                    "issues": issues,
+                    "priority": "high" if len(issues) >= 2 else "medium"
+                })
+
+        return sorted(problems, key=lambda x: len(x["issues"]), reverse=True)
+
+    @classmethod
+    def _generate_recommendations(cls, this_week: List[StudySession],
+                                  last_week: List[StudySession]) -> List[str]:
+        """Generate actionable weekly recommendations."""
+        recommendations = []
+
+        if not this_week:
+            return ["Start tracking your study sessions to get personalized recommendations!"]
+
+        this_time = sum(s.actual_minutes for s in this_week)
+        last_time = sum(s.actual_minutes for s in last_week) if last_week else 0
+
+        # Time-based recommendations
+        if this_time < 120:  # Less than 2 hours
+            recommendations.append(
+                "⏰ Study time is low this week. Try scheduling 2-3 focused sessions."
+            )
+        elif this_time > last_time * 1.5 and last_time > 0:
+            recommendations.append(
+                "📈 Great increase in study time! Make sure to include breaks to avoid burnout."
+            )
+
+        # Quality-based recommendations
+        avg_score = sum(s.topic_relevance_score for s in this_week) / len(this_week)
+        if avg_score < 60:
+            recommendations.append(
+                "🎯 Focus quality is low. Try the Pomodoro technique (25 min focused + 5 min break)."
+            )
+
+        # Issue-based recommendations
+        drift_count = sum(1 for s in this_week if s.topic_drift_detected)
+        if drift_count > len(this_week) * 0.3:
+            recommendations.append(
+                "📍 Topic drift detected often. Write your learning goal before each session."
+            )
+
+        overconf_count = sum(1 for s in this_week if s.overconfidence_detected)
+        if overconf_count > len(this_week) * 0.3:
+            recommendations.append(
+                "💭 Passive learning detected. Add more 'why' and 'how' to your notes."
+            )
+
+        # Topic variety
+        topics = set(s.topic for s in this_week)
+        if len(topics) == 1 and len(this_week) > 3:
+            recommendations.append(
+                "📚 Consider varying your topics. Interleaved practice improves retention."
+            )
+
+        return recommendations[:4] if recommendations else ["Keep up the good work! 🌟"]
+
+    @classmethod
+    def _calculate_streak(cls, all_sessions: List[StudySession]) -> dict:
+        """Calculate current and longest study streak."""
+        if not all_sessions:
+            return {"current": 0, "longest": 0}
+
+        dates = sorted(set(
+            datetime.fromisoformat(s.start_time).date()
+            for s in all_sessions
+        ))
+
+        if not dates:
+            return {"current": 0, "longest": 0}
+
+        streaks = []
+        current = 1
+
+        for i in range(1, len(dates)):
+            if (dates[i] - dates[i-1]).days == 1:
+                current += 1
+            else:
+                streaks.append(current)
+                current = 1
+        streaks.append(current)
+
+        # Check if streak is still active
+        today = datetime.now().date()
+        last_study = dates[-1]
+        active = (today - last_study).days <= 1
+
+        return {
+            "current": current if active else 0,
+            "longest": max(streaks),
+            "last_study": last_study.isoformat()
+        }
+
+
+def display_weekly_report():
+    """Display the weekly report with visualizations."""
+    sessions = load_sessions()
+
+    print("\n" + "═" * 50)
+    print("  📊 WEEKLY STUDY REPORT")
+    print("═" * 50)
+
+    if not sessions:
+        print("\n  No sessions recorded yet!")
+        print("  Complete some study sessions to see your weekly report.")
+        return
+
+    report = WeeklyReportGenerator.generate(sessions)
+    overview = report["overview"]
+    this_week = overview["this_week"]
+    last_week = overview["last_week"]
+
+    # Period
+    print(f"\n  📅 Week: {report['period']['start']} to {report['period']['end']}")
+
+    # Streak
+    streak = report["streak"]
+    if streak["current"] > 0:
+        print(f"  🔥 Current Streak: {streak['current']} days")
+    print(f"  🏆 Longest Streak: {streak['longest']} days")
+
+    # Overview comparison
+    print("\n" + "─" * 50)
+    print("  📈 THIS WEEK vs LAST WEEK")
+    print("─" * 50)
+
+    time_arrow = CLIChart.trend_arrow(this_week["time"], last_week["time"])
+    sess_arrow = CLIChart.trend_arrow(this_week["sessions"], last_week["sessions"])
+
+    print(f"\n  Study Time:  {this_week['time']:.0f} min {time_arrow} (was {last_week['time']:.0f})")
+    print(f"  Sessions:    {this_week['sessions']} {sess_arrow} (was {last_week['sessions']})")
+    print(f"  Avg Score:   {this_week['avg_relevance']:.0f}/100")
+    print(f"  Issues:      {this_week['issues']} sessions with focus problems")
+
+    # Daily breakdown chart
+    daily = report["daily_breakdown"]
+    if any(d["minutes"] > 0 for d in daily):
+        print("\n" + "─" * 50)
+        print("  📅 DAILY BREAKDOWN")
+        print("─" * 50 + "\n")
+
+        max_mins = max(d["minutes"] for d in daily) or 1
+        for d in daily:
+            bar = CLIChart.horizontal_bar(d["day"], d["minutes"], max_mins, width=15)
+            score = f"({d['avg_score']:.0f}%)" if d["sessions"] > 0 else ""
+            print(f"{bar} min {score}")
+
+    # Time vs Retention
+    tvr = report["time_vs_retention"]
+    print("\n" + "─" * 50)
+    print("  ⏱️  TIME vs RETENTION")
+    print("─" * 50)
+    print(f"\n  Short (<20m):  {tvr['short_sessions']['count']} sessions, avg {tvr['short_sessions']['avg_score']:.0f}%")
+    print(f"  Medium (20-40m): {tvr['medium_sessions']['count']} sessions, avg {tvr['medium_sessions']['avg_score']:.0f}%")
+    print(f"  Long (40m+):   {tvr['long_sessions']['count']} sessions, avg {tvr['long_sessions']['avg_score']:.0f}%")
+    print(f"\n  💡 Optimal duration: {tvr['optimal_duration']}")
+
+    # Topic Analysis
+    topics = report["topic_analysis"]
+    if topics:
+        print("\n" + "─" * 50)
+        print("  📚 TOPICS STUDIED")
+        print("─" * 50)
+
+        max_time = max(t["time"] for t in topics) if topics else 1
+        for t in topics[:5]:  # Top 5 topics
+            understanding_icon = {"good": "✅", "medium": "➖", "low": "⚠️"}[t["understanding"]]
+            bar = CLIChart.horizontal_bar(
+                t["topic"][:10],
+                t["time"],
+                max_time,
+                width=12
+            )
+            print(f"{bar} min {understanding_icon}")
+
+    # Problem Areas
+    problems = report["problem_areas"]
+    if problems:
+        print("\n" + "─" * 50)
+        print("  ⚠️  AREAS NEEDING ATTENTION")
+        print("─" * 50)
+
+        for p in problems[:3]:
+            priority_icon = "🔴" if p["priority"] == "high" else "🟡"
+            print(f"\n  {priority_icon} {p['topic']}")
+            for issue in p["issues"]:
+                print(f"     • {issue}")
+
+    # Recommendations
+    recs = report["recommendations"]
+    print("\n" + "═" * 50)
+    print("  💡 RECOMMENDATIONS")
+    print("═" * 50)
+
+    for rec in recs:
+        print(f"\n  • {rec}")
+
+    # Weekly grade
+    print("\n" + "─" * 50)
+    grade = cls_calculate_weekly_grade(this_week)
+    print(f"\n  📊 WEEKLY GRADE: {grade['letter']} ({grade['score']}/100)")
+    print(f"     {grade['message']}")
+
+
+def cls_calculate_weekly_grade(stats: dict) -> dict:
+    """Calculate an overall weekly grade."""
+    score = 0
+
+    # Time component (max 40 points)
+    # 5+ hours = 40, 3 hours = 30, 1 hour = 15
+    time_score = min(40, (stats["time"] / 300) * 40)
+    score += time_score
+
+    # Quality component (max 40 points)
+    quality_score = (stats["avg_relevance"] / 100) * 40
+    score += quality_score
+
+    # Consistency component (max 20 points)
+    # Based on number of sessions (5+ sessions = 20)
+    consistency_score = min(20, stats["sessions"] * 4)
+    score += consistency_score
+
+    # Penalty for issues
+    issue_penalty = stats["issues"] * 5
+    score = max(0, score - issue_penalty)
+
+    # Determine grade
+    if score >= 90:
+        letter, message = "A+", "Outstanding week! Keep this momentum!"
+    elif score >= 80:
+        letter, message = "A", "Excellent work! You're building strong habits."
+    elif score >= 70:
+        letter, message = "B", "Good progress. A bit more consistency would help."
+    elif score >= 60:
+        letter, message = "C", "Decent effort. Try to increase focus quality."
+    elif score >= 50:
+        letter, message = "D", "Room for improvement. Set smaller, achievable goals."
+    else:
+        letter, message = "F", "Let's restart fresh. Even 15 min/day makes a difference."
+
+    return {"score": round(score), "letter": letter, "message": message}
+
+
+# ============================================================================
 # MAIN APPLICATION
 # ============================================================================
 
@@ -955,6 +1436,11 @@ def main_menu():
             today_time = sum(s.actual_minutes for s in today_sessions)
             print(f"\n  📅 Today: {len(today_sessions)} sessions | {today_time:.0f} min")
 
+            # Show streak
+            streak_data = WeeklyReportGenerator._calculate_streak(sessions)
+            if streak_data["current"] > 0:
+                print(f"  🔥 Streak: {streak_data['current']} days")
+
             # Show if issues detected recently
             recent_issues = sum(1 for s in sessions[-5:]
                               if s.topic_drift_detected or s.overconfidence_detected)
@@ -966,8 +1452,9 @@ def main_menu():
 
         print("\n" + "─" * 50)
         print("\n  [1] 📚 Start Study Session")
-        print("  [2] 📜 View History")
-        print("  [3] 🚪 Exit")
+        print("  [2] 📊 Weekly Report")
+        print("  [3] 📜 View History")
+        print("  [4] 🚪 Exit")
 
         choice = input("\n  Select: ").strip()
 
@@ -977,13 +1464,366 @@ def main_menu():
             input("\n  Press Enter to continue...")
         elif choice == "2":
             clear_screen()
-            display_history()
+            display_weekly_report()
             input("\n  Press Enter to continue...")
         elif choice == "3":
+            clear_screen()
+            display_history()
+            input("\n  Press Enter to continue...")
+        elif choice == "4":
             print("\n  👋 Keep learning!\n")
             break
 
 
+# ============================================================================
+# DEMO MODE - Preloaded sample data for showcasing
+# ============================================================================
+
+def generate_demo_sessions() -> List[dict]:
+    """Generate realistic demo sessions for showcasing the app."""
+    today = datetime.now()
+    sessions = []
+
+    # Demo data: varied sessions over the past 2 weeks
+    demo_data = [
+        # Day -13: Started strong
+        {"days_ago": 13, "topic": "Python Basics", "planned": 25, "actual": 24.5,
+         "relevance": 85, "notes": ["Learned about list comprehensions", "Practiced slicing syntax",
+         "Understood mutable vs immutable types"], "drift": False, "overconf": False},
+
+        # Day -12: Good session
+        {"days_ago": 12, "topic": "Python Basics", "planned": 25, "actual": 25,
+         "relevance": 78, "notes": ["Dictionaries and their methods", "Learned about .get() for safe access",
+         "Practiced nested data structures"], "drift": False, "overconf": False},
+
+        # Day -11: Topic drift example
+        {"days_ago": 11, "topic": "Data Structures", "planned": 45, "actual": 40,
+         "relevance": 45, "notes": ["Watched video about arrays", "Something about linked lists",
+         "Got distracted by YouTube"], "drift": True, "overconf": True},
+
+        # Day -10: Recovery
+        {"days_ago": 10, "topic": "Data Structures", "planned": 25, "actual": 25,
+         "relevance": 82, "notes": ["Arrays: O(1) access, O(n) insert", "Linked lists: O(n) access, O(1) insert",
+         "Trade-offs depend on use case"], "drift": False, "overconf": False},
+
+        # Day -8: New topic
+        {"days_ago": 8, "topic": "Algorithms", "planned": 30, "actual": 28,
+         "relevance": 75, "notes": ["Binary search requires sorted array", "Time complexity O(log n)",
+         "Implemented iterative version"], "drift": False, "overconf": False},
+
+        # Day -7: Passive learning detected
+        {"days_ago": 7, "topic": "Machine Learning", "planned": 45, "actual": 45,
+         "relevance": 52, "notes": ["Watched 3Blue1Brown neural network video",
+         "Saw backpropagation explanation"], "drift": False, "overconf": True},
+
+        # Day -5: Good focus
+        {"days_ago": 5, "topic": "Algorithms", "planned": 25, "actual": 25,
+         "relevance": 88, "notes": ["Sorting algorithms comparison", "QuickSort: avg O(n log n), worst O(n²)",
+         "MergeSort: always O(n log n) but uses extra space"], "drift": False, "overconf": False},
+
+        # Day -4: Short but effective
+        {"days_ago": 4, "topic": "Python Basics", "planned": 15, "actual": 15,
+         "relevance": 90, "notes": ["Decorators wrap functions", "@property creates getters",
+         "functools.wraps preserves metadata"], "drift": False, "overconf": False},
+
+        # Day -3: Struggled
+        {"days_ago": 3, "topic": "Machine Learning", "planned": 45, "actual": 30,
+         "relevance": 48, "notes": ["Gradient descent moves toward minimum",
+         "Learning rate affects convergence"], "drift": True, "overconf": False},
+
+        # Day -2: Good session
+        {"days_ago": 2, "topic": "Algorithms", "planned": 25, "actual": 25,
+         "relevance": 85, "notes": ["Dynamic programming breaks problems into subproblems",
+         "Memoization caches results", "Fibonacci example: O(n) vs O(2^n)"], "drift": False, "overconf": False},
+
+        # Day -1: Yesterday
+        {"days_ago": 1, "topic": "Data Structures", "planned": 30, "actual": 28,
+         "relevance": 80, "notes": ["Trees: hierarchical data structure", "BST: left < root < right",
+         "Balanced trees maintain O(log n) operations"], "drift": False, "overconf": False},
+
+        # Today
+        {"days_ago": 0, "topic": "Python Basics", "planned": 25, "actual": 25,
+         "relevance": 92, "notes": ["Context managers with 'with' statement",
+         "__enter__ and __exit__ methods", "Great for resource cleanup"], "drift": False, "overconf": False},
+    ]
+
+    for d in demo_data:
+        session_time = today - timedelta(days=d["days_ago"], hours=random.randint(8, 18))
+
+        session = {
+            "id": session_time.strftime("%Y%m%d_%H%M%S"),
+            "topic": d["topic"],
+            "planned_minutes": d["planned"],
+            "actual_minutes": d["actual"],
+            "start_time": session_time.isoformat(),
+            "end_time": (session_time + timedelta(minutes=d["actual"])).isoformat(),
+            "breaks": [],
+            "total_break_time": 0,
+            "notes": d["notes"],
+            "ai_summary": f"Covered: {'; '.join(d['notes'][:2])}.",
+            "topic_relevance_score": d["relevance"],
+            "focus_feedback": "Good session!" if d["relevance"] >= 70 else "Room for improvement.",
+            "completed": True,
+            "topic_drift_detected": d["drift"],
+            "drift_details": "Notes don't fully match the topic." if d["drift"] else "",
+            "overconfidence_detected": d["overconf"],
+            "overconfidence_details": "Passive consumption detected." if d["overconf"] else "",
+            "revision_tasks": ["Review notes tomorrow", "Practice with exercises"],
+            "next_session_plan": f"Continue with {d['topic']} focusing on practical application."
+        }
+        sessions.append(session)
+
+    return sessions
+
+
+def load_demo_mode():
+    """Load demo data and display the app in showcase mode."""
+    print("\n" + "═" * 50)
+    print("  🎬 DEMO MODE")
+    print("═" * 50)
+    print("\n  Loading sample data for demonstration...")
+
+    # Create demo data directory
+    demo_dir = DATA_DIR / "demo_backup"
+    demo_dir.mkdir(exist_ok=True)
+
+    # Backup existing data if any
+    if SESSIONS_FILE.exists():
+        import shutil
+        backup_file = demo_dir / f"sessions_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        shutil.copy(SESSIONS_FILE, backup_file)
+        print(f"  📁 Backed up existing data to {backup_file.name}")
+
+    # Load demo sessions
+    demo_sessions = generate_demo_sessions()
+    with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
+        json.dump({"sessions": demo_sessions}, f, indent=2)
+
+    print(f"  ✅ Loaded {len(demo_sessions)} demo sessions")
+    print("\n  Demo includes:")
+    print("    • 12 study sessions over 2 weeks")
+    print("    • 4 different topics")
+    print("    • Examples of topic drift and overconfidence detection")
+    print("    • Varied focus scores and session lengths")
+    print("\n  You can now explore all features with realistic data!")
+
+    input("\n  Press Enter to continue to main menu...")
+
+
+# ============================================================================
+# EXPORT FUNCTIONALITY
+# ============================================================================
+
+def export_weekly_report():
+    """Export weekly report to a text file."""
+    sessions = load_sessions()
+
+    if not sessions:
+        print("\n  No sessions to export!")
+        return
+
+    report = WeeklyReportGenerator.generate(sessions)
+    overview = report["overview"]
+    this_week = overview["this_week"]
+
+    # Build report text
+    lines = []
+    lines.append("=" * 60)
+    lines.append("SMART STUDY & FOCUS COMPANION - WEEKLY REPORT")
+    lines.append("=" * 60)
+    lines.append(f"\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    lines.append(f"Week: {report['period']['start']} to {report['period']['end']}")
+
+    # Streak
+    streak = report["streak"]
+    lines.append(f"\nCurrent Streak: {streak['current']} days")
+    lines.append(f"Longest Streak: {streak['longest']} days")
+
+    # Overview
+    lines.append("\n" + "-" * 60)
+    lines.append("OVERVIEW")
+    lines.append("-" * 60)
+    lines.append(f"Study Time: {this_week['time']:.0f} minutes ({this_week['time']/60:.1f} hours)")
+    lines.append(f"Sessions: {this_week['sessions']}")
+    lines.append(f"Average Score: {this_week['avg_relevance']:.0f}/100")
+    lines.append(f"Focus Issues: {this_week['issues']} sessions")
+
+    # Daily breakdown
+    daily = report["daily_breakdown"]
+    lines.append("\n" + "-" * 60)
+    lines.append("DAILY BREAKDOWN")
+    lines.append("-" * 60)
+    for d in daily:
+        if d["minutes"] > 0:
+            lines.append(f"  {d['day']}: {d['minutes']:.0f} min (avg score: {d['avg_score']:.0f}%)")
+
+    # Topics
+    topics = report["topic_analysis"]
+    if topics:
+        lines.append("\n" + "-" * 60)
+        lines.append("TOPICS STUDIED")
+        lines.append("-" * 60)
+        for t in topics:
+            status = "✓" if t["understanding"] == "good" else "!" if t["understanding"] == "medium" else "X"
+            lines.append(f"  [{status}] {t['topic']}: {t['time']:.0f} min, {t['sessions']} sessions, avg {t['avg_score']:.0f}%")
+
+    # Time vs Retention
+    tvr = report["time_vs_retention"]
+    lines.append("\n" + "-" * 60)
+    lines.append("TIME VS RETENTION ANALYSIS")
+    lines.append("-" * 60)
+    lines.append(f"  Short (<20m): {tvr['short_sessions']['count']} sessions, avg {tvr['short_sessions']['avg_score']:.0f}%")
+    lines.append(f"  Medium (20-40m): {tvr['medium_sessions']['count']} sessions, avg {tvr['medium_sessions']['avg_score']:.0f}%")
+    lines.append(f"  Long (40m+): {tvr['long_sessions']['count']} sessions, avg {tvr['long_sessions']['avg_score']:.0f}%")
+    lines.append(f"  Optimal Duration: {tvr['optimal_duration']}")
+
+    # Problem areas
+    problems = report["problem_areas"]
+    if problems:
+        lines.append("\n" + "-" * 60)
+        lines.append("AREAS NEEDING ATTENTION")
+        lines.append("-" * 60)
+        for p in problems:
+            lines.append(f"  [{p['priority'].upper()}] {p['topic']}")
+            for issue in p["issues"]:
+                lines.append(f"      - {issue}")
+
+    # Recommendations
+    lines.append("\n" + "-" * 60)
+    lines.append("RECOMMENDATIONS")
+    lines.append("-" * 60)
+    for rec in report["recommendations"]:
+        # Remove emoji for plain text
+        clean_rec = re.sub(r'[^\w\s.,!?;:\'-]', '', rec).strip()
+        lines.append(f"  * {clean_rec}")
+
+    # Grade
+    grade = cls_calculate_weekly_grade(this_week)
+    lines.append("\n" + "=" * 60)
+    lines.append(f"WEEKLY GRADE: {grade['letter']} ({grade['score']}/100)")
+    lines.append(grade['message'])
+    lines.append("=" * 60)
+
+    # Write to file
+    export_path = Path(__file__).parent / f"weekly_report_{datetime.now().strftime('%Y%m%d')}.txt"
+    with open(export_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    print(f"\n  ✅ Report exported to: {export_path.name}")
+    return export_path
+
+
+# ============================================================================
+# CLI ARGUMENT PARSING
+# ============================================================================
+
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Smart Study & Focus Companion - AI-Powered Study Tracker",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python focus_companion.py              # Normal mode
+  python focus_companion.py --demo       # Load demo data for showcase
+  python focus_companion.py --export     # Export weekly report to file
+  python focus_companion.py --stats      # Quick stats overview
+        """
+    )
+
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Load demo data for showcasing the application"
+    )
+
+    parser.add_argument(
+        "--export",
+        action="store_true",
+        help="Export weekly report to text file"
+    )
+
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Show quick statistics and exit"
+    )
+
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Reset all session data (with confirmation)"
+    )
+
+    return parser.parse_args()
+
+
+def show_quick_stats():
+    """Display quick statistics."""
+    sessions = load_sessions()
+
+    print("\n" + "═" * 50)
+    print("  📊 QUICK STATS")
+    print("═" * 50)
+
+    if not sessions:
+        print("\n  No sessions recorded yet.")
+        return
+
+    total_time = sum(s.actual_minutes for s in sessions)
+    avg_score = sum(s.topic_relevance_score for s in sessions) / len(sessions)
+    topics = set(s.topic for s in sessions)
+
+    streak = WeeklyReportGenerator._calculate_streak(sessions)
+
+    print(f"\n  Total Sessions: {len(sessions)}")
+    print(f"  Total Study Time: {total_time:.0f} min ({total_time/60:.1f} hours)")
+    print(f"  Average Focus Score: {avg_score:.0f}/100")
+    print(f"  Topics Studied: {len(topics)}")
+    print(f"  Current Streak: {streak['current']} days")
+    print(f"  Longest Streak: {streak['longest']} days")
+
+    # This week
+    today = datetime.now().date()
+    week_start = today - timedelta(days=today.weekday())
+    this_week = [s for s in sessions
+                 if datetime.fromisoformat(s.start_time).date() >= week_start]
+
+    if this_week:
+        week_time = sum(s.actual_minutes for s in this_week)
+        print(f"\n  This Week: {len(this_week)} sessions, {week_time:.0f} min")
+
+
+def reset_data():
+    """Reset all session data with confirmation."""
+    print("\n  ⚠️  This will delete ALL session data!")
+    confirm = input("  Type 'DELETE' to confirm: ").strip()
+
+    if confirm == "DELETE":
+        if SESSIONS_FILE.exists():
+            os.remove(SESSIONS_FILE)
+        print("  ✅ All data has been reset.")
+    else:
+        print("  ❌ Reset cancelled.")
+
+
+# ============================================================================
+# MAIN ENTRY POINT
+# ============================================================================
+
 if __name__ == "__main__":
-    clear_screen()
-    main_menu()
+    args = parse_arguments()
+
+    if args.demo:
+        clear_screen()
+        load_demo_mode()
+        main_menu()
+    elif args.export:
+        export_weekly_report()
+    elif args.stats:
+        show_quick_stats()
+    elif args.reset:
+        reset_data()
+    else:
+        clear_screen()
+        main_menu()
